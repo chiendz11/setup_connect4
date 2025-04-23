@@ -8,7 +8,7 @@ from typing import List, Optional, Tuple
 ROW_COUNT = 6
 COLUMN_COUNT = 7
 WIN_COUNT = 4
-AI_DEPTH = 12  # Độ sâu cao để đảm bảo bất bại
+AI_DEPTH = 12  # Độ sâu cao để bất bại
 BASE_TIMEOUT = 9.0  # Giới hạn 9 giây
 TRANS_TABLE_SIZE = 1000000
 
@@ -34,6 +34,7 @@ class LimitedDict(OrderedDict):
 transposition_table: LimitedDict = LimitedDict(maxsize=TRANS_TABLE_SIZE)
 killer_moves: dict = {d: [] for d in range(AI_DEPTH + 1)}
 history_scores: dict = {}
+zobrist_table = np.random.randint(1, 2**63, (ROW_COUNT, COLUMN_COUNT, 3), dtype=np.int64)
 
 # --- Helper Functions ---
 def board_to_key(board: np.ndarray) -> int:
@@ -86,7 +87,7 @@ def winning_move(board: np.ndarray, piece: int) -> bool:
     return False
 
 def can_win_next(board: np.ndarray, piece: int) -> bool:
-    """Kiểm tra xem có thể thắng ngay trong nước tiếp theo."""
+    """Kiểm tra thắng ngay trong nước tiếp theo."""
     for col in range(COLUMN_COUNT):
         if is_valid_location(board, col):
             row = get_next_open_row(board, col)
@@ -114,9 +115,6 @@ def detect_double_threat(board: np.ndarray, piece: int, col: int) -> bool:
             threat_count += 1
         temp_board[next_row, next_col] = 0
     return threat_count >= 2
-
-# --- Zobrist Hashing ---
-zobrist_table = np.random.randint(1, 2**63, (ROW_COUNT, COLUMN_COUNT, 3), dtype=np.int64)
 
 # --- Evaluation Function ---
 def evaluate_window(window: List[int], piece: int) -> int:
@@ -174,7 +172,7 @@ def evaluate_board(board: np.ndarray, piece: int) -> int:
             window = [board[r - i, c + i] for i in range(WIN_COUNT)]
             score += evaluate_window(window, piece)
 
-    transposition_table[board_key] = (-1, score)
+    transposition_table[board_key] = (-1, score, 'exact', None)
     return score
 
 # --- Move Sorting ---
@@ -244,7 +242,6 @@ def negamax(board: np.ndarray, depth: int, alpha: int, beta: int, piece: int, st
 
     opp_piece = 3 - piece
     if can_win_next(board, piece):
-        moves = []
         for col in range(COLUMN_COUNT):
             if is_valid_location(board, col):
                 row = get_next_open_row(board, col)
@@ -253,7 +250,7 @@ def negamax(board: np.ndarray, depth: int, alpha: int, beta: int, piece: int, st
                     board[row, col] = 0
                     return col, 1000000000 + depth
                 board[row, col] = 0
-                moves.append(col)
+        moves = get_valid_moves(board)
     else:
         moves = get_valid_moves(board)
 
@@ -273,11 +270,13 @@ def negamax(board: np.ndarray, depth: int, alpha: int, beta: int, piece: int, st
             return None, alpha
 
     moves_order = sort_moves(board, moves, piece, depth)
-    best_move = moves_order[0]
+    best_move = moves_order[0] if moves_order else None
     value = -1000000000
 
     for col in moves_order:
         row = get_next_open_row(board, col)
+        if row is None:
+            continue
         board[row, col] = piece
         _, score = negamax(board, depth - 1, -beta, -alpha, opp_piece, start_time)
         score = -score
@@ -451,8 +450,8 @@ def process_request(request):
 if __name__ == "__main__":
     request = {
         "board": [
-            [0, 0, 0, 0, 0, 0, 0],
-            [0, 0, 0, 0, 0, 0, 0],
+            [0, 0, 0, 1, 0, 0, 0],
+            [0, 0, 0, 2, 0, 0, 0],
             [0, 0, 0, 0, 0, 0, 0],
             [0, 0, 0, 0, 0, 0, 0],
             [0, 0, 0, 0, 0, 0, 0],

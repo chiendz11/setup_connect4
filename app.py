@@ -461,7 +461,7 @@ def find_best_move(board: np.ndarray, piece: int, max_depth: int) -> int:
 
 
 # --- API Endpoint ---
-@app.post("/api/test")
+@app.get("/api/test")
 async def health_check():
     return {"status":"ok","message":"Server is running"}
 
