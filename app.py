@@ -464,7 +464,7 @@ def find_best_move(board: np.ndarray, piece: int, max_depth: int) -> int:
 @app.get("/api/test")
 async def health_check():
     return {"status":"ok","message":"Server is running"}
-
+@app.post("/api/connect4-move")
 async def make_move(game_state: GameState) -> AIResponse:
     try:
         if not game_state.valid_moves:

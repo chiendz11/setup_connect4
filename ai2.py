@@ -8,14 +8,14 @@ from typing import List, Optional, Tuple
 ROW_COUNT = 6
 COLUMN_COUNT = 7
 WIN_COUNT = 4
-AI_DEPTH = 12  # Độ sâu cao để bất bại
-BASE_TIMEOUT = 9.0  # Giới hạn 9 giây
-TRANS_TABLE_SIZE = 1000000
+AI_DEPTH = 8  # Giảm độ sâu để cải thiện hiệu suất
+BASE_TIMEOUT = 5.0  # Tăng timeout để tìm kiếm sâu hơn
+TRANS_TABLE_SIZE = 2000000
 
 # --- Logging Configuration ---
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(message)s',
+    level=logging.DEBUG,
+    format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[logging.StreamHandler()]
 )
 
@@ -38,7 +38,6 @@ zobrist_table = np.random.randint(1, 2**63, (ROW_COUNT, COLUMN_COUNT, 3), dtype=
 
 # --- Helper Functions ---
 def board_to_key(board: np.ndarray) -> int:
-    """Tạo khóa Zobrist cho bàn cờ."""
     key = 0
     for r in range(ROW_COUNT):
         for c in range(COLUMN_COUNT):
@@ -47,18 +46,15 @@ def board_to_key(board: np.ndarray) -> int:
     return key
 
 def is_valid_location(board: np.ndarray, col: int) -> bool:
-    """Kiểm tra cột hợp lệ."""
     return board[ROW_COUNT - 1, col] == 0
 
 def get_next_open_row(board: np.ndarray, col: int) -> Optional[int]:
-    """Tìm hàng trống thấp nhất."""
     for r in range(ROW_COUNT):
         if board[r, col] == 0:
             return r
     return None
 
 def get_valid_moves(board: np.ndarray) -> List[int]:
-    """Lấy danh sách cột hợp lệ, ưu tiên trung tâm."""
     valid_moves = [col for col in range(COLUMN_COUNT) if is_valid_location(board, col)]
     center_col = COLUMN_COUNT // 2
     if center_col in valid_moves:
@@ -67,39 +63,67 @@ def get_valid_moves(board: np.ndarray) -> List[int]:
     return valid_moves
 
 def winning_move(board: np.ndarray, piece: int) -> bool:
-    """Kiểm tra chuỗi 4 quân thắng."""
-    for c in range(COLUMN_COUNT - 3):
-        for r in range(ROW_COUNT):
+    """Kiểm tra chuỗi 4 quân thắng với log chi tiết."""
+    # Horizontal
+    for r in range(ROW_COUNT):
+        for c in range(COLUMN_COUNT - 3):
             if all(board[r, c + i] == piece for i in range(WIN_COUNT)):
+                logging.debug(f"Win detected: Horizontal at row {r}, cols {c} to {c+3}")
                 return True
+
+    # Vertical
     for c in range(COLUMN_COUNT):
         for r in range(ROW_COUNT - 3):
             if all(board[r + i, c] == piece for i in range(WIN_COUNT)):
+                logging.debug(f"Win detected: Vertical at col {c}, rows {r} to {r+3}")
                 return True
-    for c in range(COLUMN_COUNT - 3):
-        for r in range(ROW_COUNT - 3):
+
+    # Positive diagonal (/)
+    for r in range(ROW_COUNT - 3):
+        for c in range(COLUMN_COUNT - 3):
             if all(board[r + i, c + i] == piece for i in range(WIN_COUNT)):
+                logging.debug(f"Win detected: Positive diagonal from ({r},{c}) to ({r+3},{c+3})")
                 return True
-    for c in range(COLUMN_COUNT - 3):
-        for r in range(3, ROW_COUNT):
+
+    # Negative diagonal (\)
+    for r in range(WIN_COUNT - 1, ROW_COUNT):
+        for c in range(COLUMN_COUNT - 3):
             if all(board[r - i, c + i] == piece for i in range(WIN_COUNT)):
+                logging.debug(f"Win detected: Negative diagonal from ({r},{c}) to ({r-3},{c+3})")
                 return True
+
     return False
 
-def can_win_next(board: np.ndarray, piece: int) -> bool:
-    """Kiểm tra thắng ngay trong nước tiếp theo."""
-    for col in range(COLUMN_COUNT):
-        if is_valid_location(board, col):
-            row = get_next_open_row(board, col)
+def can_win_next(board: np.ndarray, piece: int) -> List[int]:
+    """Thu thập tất cả cột dẫn đến thắng ngay với log chi tiết."""
+    win_cols = []
+    valid_moves = get_valid_moves(board)
+    for col in valid_moves:
+        row = get_next_open_row(board, col)
+        if row is not None:
             board[row, col] = piece
             if winning_move(board, piece):
-                board[row, col] = 0
-                return True
+                logging.debug(f"Win possible for piece {piece} at col {col}, row {row}")
+                win_cols.append(col)
             board[row, col] = 0
-    return False
+        else:
+            logging.debug(f"Invalid move for col {col}: No open row")
+    logging.debug(f"can_win_next(piece={piece}) returns: {win_cols}")
+    return win_cols
+
+def is_safe_move(board: np.ndarray, col: int, piece: int) -> bool:
+    """Kiểm tra xem nước đi có tạo mối đe dọa thắng ngay cho đối thủ hay không."""
+    row = get_next_open_row(board, col)
+    if row is None:
+        return False
+    temp_board = board.copy()
+    temp_board[row, col] = piece
+    opp_piece = 3 - piece
+    threats = can_win_next(temp_board, opp_piece)
+    return len(threats) == 0
 
 def detect_double_threat(board: np.ndarray, piece: int, col: int) -> bool:
-    """Phát hiện nước đi tạo hai cơ hội thắng."""
+    """Kiểm tra xem nước đi có tạo ra ít nhất hai cơ hội thắng hay không."""
     row = get_next_open_row(board, col)
     if row is None:
         return False
@@ -108,17 +132,44 @@ def detect_double_threat(board: np.ndarray, piece: int, col: int) -> bool:
     threat_count = 0
     for next_col in get_valid_moves(temp_board):
         next_row = get_next_open_row(temp_board, next_col)
-        if next_row is None:
-            continue
-        temp_board[next_row, next_col] = piece
-        if winning_move(temp_board, piece):
-            threat_count += 1
-        temp_board[next_row, next_col] = 0
+        if next_row is not None:
+            temp_board[next_row, next_col] = piece
+            if winning_move(temp_board, piece):
+                threat_count += 1
+            temp_board[next_row, next_col] = 0
     return threat_count >= 2
 
+def count_open_threes(board: np.ndarray, piece: int) -> int:
+    """Đếm số chuỗi 3 quân mở (có thể mở rộng thành 4)."""
+    count = 0
+    # Horizontal
+    for r in range(ROW_COUNT):
+        for c in range(COLUMN_COUNT - 3):
+            window = [board[r, c + i] for i in range(WIN_COUNT)]
+            if window.count(piece) == 3 and window.count(0) == 1:
+                count += 1
+    # Vertical
+    for c in range(COLUMN_COUNT):
+        for r in range(ROW_COUNT - 3):
+            window = [board[r + i, c] for i in range(WIN_COUNT)]
+            if window.count(piece) == 3 and window.count(0) == 1:
+                count += 1
+    # Positive diagonal
+    for r in range(ROW_COUNT - 3):
+        for c in range(COLUMN_COUNT - 3):
+            window = [board[r + i, c + i] for i in range(WIN_COUNT)]
+            if window.count(piece) == 3 and window.count(0) == 1:
+                count += 1
+    # Negative diagonal
+    for r in range(WIN_COUNT - 1, ROW_COUNT):
+        for c in range(COLUMN_COUNT - 3):
+            window = [board[r - i, c + i] for i in range(WIN_COUNT)]
+            if window.count(piece) == 3 and window.count(0) == 1:
+                count += 1
+    return count
+
 # --- Evaluation Function ---
-def evaluate_window(window: List[int], piece: int) -> int:
-    """Đánh giá cửa sổ 4 ô."""
+def evaluate_window(window: List[int], piece: int, is_horizontal: bool = False) -> int:
     score = 0
     opp_piece = 3 - piece
     piece_count = window.count(piece)
@@ -128,34 +179,41 @@ def evaluate_window(window: List[int], piece: int) -> int:
     if piece_count == 4:
         score += 1000000000
     elif piece_count == 3 and empty_count == 1:
-        score += 1000000
+        score += 10000000
     elif piece_count == 2 and empty_count == 2:
-        score += 10000
+        score += 100000
 
     if opp_count == 4:
         score -= 1000000000
     elif opp_count == 3 and empty_count == 1:
-        score -= 8000000
+        score -= 500000000 if is_horizontal else 400000000  # Tăng phạt cho chuỗi ngang
     elif opp_count == 2 and empty_count == 2:
-        score -= 8000
+        score -= 200000 if is_horizontal else 150000
 
     return score
 
 def evaluate_board(board: np.ndarray, piece: int) -> int:
-    """Đánh giá bàn cờ."""
     board_key = board_to_key(board)
     if board_key in transposition_table and transposition_table[board_key][0] == -1:
         return transposition_table[board_key][1]
 
     score = 0
+    # Ưu tiên cột giữa
     center_array = [int(board[r, COLUMN_COUNT // 2]) for r in range(ROW_COUNT)]
     center_count = center_array.count(piece)
-    score += center_count * 1000
+    score += center_count * 10000
 
+    # Đếm chuỗi 3 quân mở
+    open_threes = count_open_threes(board, piece)
+    opp_open_threes = count_open_threes(board, 3 - piece)
+    score += open_threes * 5000000
+    score -= opp_open_threes * 6000000  # Phạt nặng hơn cho đối thủ
+
+    # Đánh giá các hướng
     for r in range(ROW_COUNT):
         row_array = [int(board[r, c]) for c in range(COLUMN_COUNT)]
         for c in range(COLUMN_COUNT - 3):
-            score += evaluate_window(row_array[c:c + WIN_COUNT], piece)
+            score += evaluate_window(row_array[c:c + WIN_COUNT], piece, is_horizontal=True)
 
     for c in range(COLUMN_COUNT):
         col_array = [int(board[r, c]) for r in range(ROW_COUNT)]
@@ -164,12 +222,12 @@ def evaluate_board(board: np.ndarray, piece: int) -> int:
 
     for r in range(ROW_COUNT - 3):
         for c in range(COLUMN_COUNT - 3):
-            window = [board[r + i, c + i] for i in range(WIN_COUNT)]
+            window = [int(board[r + i, c + i]) for i in range(WIN_COUNT)]
             score += evaluate_window(window, piece)
 
-    for r in range(3, ROW_COUNT):
+    for r in range(WIN_COUNT - 1, ROW_COUNT):
         for c in range(COLUMN_COUNT - 3):
-            window = [board[r - i, c + i] for i in range(WIN_COUNT)]
+            window = [int(board[r - i, c + i]) for i in range(WIN_COUNT)]
             score += evaluate_window(window, piece)
 
     transposition_table[board_key] = (-1, score, 'exact', None)
@@ -177,7 +235,6 @@ def evaluate_board(board: np.ndarray, piece: int) -> int:
 
 # --- Move Sorting ---
 def sort_moves(board: np.ndarray, moves: List[int], piece: int, depth: int) -> List[int]:
-    """Sắp xếp nước đi để tối ưu hóa cắt tỉa."""
     scored_moves = []
     opp_piece = 3 - piece
     center_col = COLUMN_COUNT // 2
@@ -194,20 +251,19 @@ def sort_moves(board: np.ndarray, moves: List[int], piece: int, depth: int) -> L
         if winning_move(temp_board, piece):
             score += 1000000000
         elif detect_double_threat(board, piece, col):
-            score += 50000000
-        else:
-            temp_board[row, col] = opp_piece
-            if winning_move(temp_board, opp_piece):
-                score += 40000000
-            temp_board[row, col] = piece
-            score += evaluate_board(temp_board, piece)
-            if col == center_col:
-                score += 2000
-            elif abs(col - center_col) == 1:
-                score += 1000
-            if col in current_killers:
-                score += 15000
-            score += history_scores.get((depth, col), 0) * 0.2
+            score += 75000000
+        temp_board[row, col] = opp_piece
+        if winning_move(temp_board, opp_piece):
+            score += 90000000
+        temp_board[row, col] = piece
+        score += evaluate_board(temp_board, piece)
+        if col == center_col:
+            score += 20000
+        elif abs(col - center_col) == 1:
+            score += 10000
+        if col in current_killers:
+            score += 50000
+        score += history_scores.get((depth, col), 0) * 0.5
 
         scored_moves.append((score, col))
 
@@ -216,7 +272,6 @@ def sort_moves(board: np.ndarray, moves: List[int], piece: int, depth: int) -> L
 
 # --- Negamax with Alpha-Beta Pruning ---
 def negamax(board: np.ndarray, depth: int, alpha: int, beta: int, piece: int, start_time: float) -> Tuple[Optional[int], int]:
-    """Negamax với alpha-beta pruning."""
     if time.time() - start_time > BASE_TIMEOUT:
         return None, evaluate_board(board, piece)
 
@@ -241,19 +296,15 @@ def negamax(board: np.ndarray, depth: int, alpha: int, beta: int, piece: int, st
         return None, evaluate_board(board, piece)
 
     opp_piece = 3 - piece
-    if can_win_next(board, piece):
-        for col in range(COLUMN_COUNT):
-            if is_valid_location(board, col):
-                row = get_next_open_row(board, col)
-                board[row, col] = piece
-                if winning_move(board, piece):
-                    board[row, col] = 0
-                    return col, 1000000000 + depth
-                board[row, col] = 0
-        moves = get_valid_moves(board)
-    else:
-        moves = get_valid_moves(board)
+    win_cols = can_win_next(board, piece)
+    if win_cols:
+        return win_cols[0], 1000000000 + depth
 
+    block_cols = can_win_next(board, opp_piece)
+    if block_cols:
+        return block_cols[0], 900000000 + depth
+
+    moves = get_valid_moves(board)
     if not moves:
         return None, 0
 
@@ -303,7 +354,6 @@ def negamax(board: np.ndarray, depth: int, alpha: int, beta: int, piece: int, st
 
 # --- Main Search Function ---
 def find_best_move(board: np.ndarray, piece: int, valid_moves: List[int]) -> int:
-    """Tìm nước đi tốt nhất."""
     start_time = time.time()
     if not valid_moves:
         logging.error("No valid moves provided!")
@@ -316,37 +366,86 @@ def find_best_move(board: np.ndarray, piece: int, valid_moves: List[int]) -> int
             return center_col
         return valid_moves[0]
 
-    best_move = valid_moves[0]
-    best_score = -1000000000
-    last_completed_depth = 0
-
-    for col in valid_moves:
-        row = get_next_open_row(board, col)
-        if row is None:
-            continue
-        board[row, col] = piece
-        if winning_move(board, piece):
-            board[row, col] = 0
-            logging.info(f"Immediate win found at col {col}")
-            return col
-        board[row, col] = 0
+    win_cols = can_win_next(board, piece)
+    if win_cols and win_cols[0] in valid_moves:
+        logging.info(f"Immediate win found at col {win_cols[0]}")
+        return win_cols[0]
 
     opp_piece = 3 - piece
-    for col in valid_moves:
-        row = get_next_open_row(board, col)
-        if row is None:
-            continue
-        board[row, col] = opp_piece
-        if winning_move(board, opp_piece):
-            board[row, col] = 0
-            logging.info(f"Immediate block found at col {col}")
-            return col
-        board[row, col] = 0
+    block_cols = can_win_next(board, opp_piece)
+    if len(block_cols) == 1 and block_cols[0] in valid_moves:
+        logging.info(f"Immediate block found at col {block_cols[0]}")
+        return block_cols[0]
+    elif len(block_cols) > 1:
+        # Ưu tiên nước đi an toàn
+        safe_cols = [col for col in block_cols if col in valid_moves and is_safe_move(board, col, piece)]
+        if safe_cols:
+            logging.info(f"Safe block found at col {safe_cols[0]}")
+            return safe_cols[0]
+        # Ưu tiên chặn chuỗi ngang
+        horizontal_threat_cols = []
+        for col in block_cols:
+            if col not in valid_moves:
+                continue
+            row = get_next_open_row(board, col)
+            temp_board = board.copy()
+            temp_board[row, col] = opp_piece
+            if winning_move(temp_board, opp_piece):
+                for r in range(ROW_COUNT):
+                    for c in range(COLUMN_COUNT - 3):
+                        if all(temp_board[r, c + i] == opp_piece for i in range(WIN_COUNT)):
+                            horizontal_threat_cols.append(col)
+                            break
+            temp_board[row, col] = 0
+        if horizontal_threat_cols:
+            best_block_col = None
+            best_future_threats = float('inf')
+            for col in horizontal_threat_cols:
+                row = get_next_open_row(board, col)
+                temp_board = board.copy()
+                temp_board[row, col] = piece
+                future_threats = len(can_win_next(temp_board, opp_piece))
+                if future_threats < best_future_threats:
+                    best_future_threats = future_threats
+                    best_block_col = col
+                elif future_threats == best_future_threats:
+                    score = evaluate_board(temp_board, piece)
+                    if best_block_col is None or score > evaluate_board(board, piece):
+                        best_block_col = col
+                temp_board[row, col] = 0
+            if best_block_col is not None:
+                logging.info(f"Blocking horizontal threat at col {best_block_col} with {best_future_threats} future threats")
+                return best_block_col
+        # Chọn cột với ít mối đe dọa nhất
+        best_block_col = None
+        best_future_threats = float('inf')
+        for col in block_cols:
+            if col not in valid_moves:
+                continue
+            row = get_next_open_row(board, col)
+            temp_board = board.copy()
+            temp_board[row, col] = piece
+            future_threats = len(can_win_next(temp_board, opp_piece))
+            if future_threats < best_future_threats:
+                best_future_threats = future_threats
+                best_block_col = col
+            elif future_threats == best_future_threats:
+                score = evaluate_board(temp_board, piece)
+                if best_block_col is None or score > evaluate_board(board, piece):
+                    best_block_col = col
+            temp_board[row, col] = 0
+        if best_block_col is not None:
+            logging.info(f"Multiple threats detected, blocking col {best_block_col} with {best_future_threats} future threats")
+            return best_block_col
 
     for col in valid_moves:
         if detect_double_threat(board, piece, col):
             logging.info(f"Double threat found at col {col}")
             return col
+
+    best_move = valid_moves[0]
+    best_score = -1000000000
+    last_completed_depth = 0
 
     moves_order = sort_moves(board, valid_moves, piece, AI_DEPTH)
     for depth in range(1, AI_DEPTH + 1):
@@ -364,7 +463,7 @@ def find_best_move(board: np.ndarray, piece: int, valid_moves: List[int]) -> int
             if row is None:
                 continue
             board[row, col] = piece
-            _, score = negamax(board, depth - 1, alpha, beta, piece, start_time)
+            _, score = negamax(board, depth - 1, -beta, -alpha, opp_piece, start_time)
             score = -score
             board[row, col] = 0
 
@@ -394,7 +493,6 @@ def find_best_move(board: np.ndarray, piece: int, valid_moves: List[int]) -> int
 
 # --- Process Request Function ---
 def process_request(request):
-    """Xử lý yêu cầu từ game.py."""
     try:
         if not isinstance(request, dict):
             logging.error("Request must be a dictionary")
@@ -446,19 +544,19 @@ def process_request(request):
         logging.error(f"Error processing request: {e}")
         return valid_moves[0] if valid_moves else 0
 
-# --- Test the AI ---
+# --- Test the AI with Critical Board State ---
 if __name__ == "__main__":
     request = {
         "board": [
-            [0, 0, 0, 1, 0, 0, 0],
-            [0, 0, 0, 2, 0, 0, 0],
-            [0, 0, 0, 0, 0, 0, 0],
-            [0, 0, 0, 0, 0, 0, 0],
-            [0, 0, 0, 0, 0, 0, 0],
-            [0, 0, 0, 0, 0, 0, 0]
+            [1, 1, 2, 1, 0, 2, 0],
+            [1, 2, 2, 2, 0, 0, 0],
+            [0, 1, 2, 1, 0, 0, 0],
+            [0, 2, 1, 2, 0, 0, 0],
+            [0, 0, 1, 2, 0, 0, 0],
+            [0, 0, 1, 0, 0, 0, 0]
         ],
         "current_player": 1,
-        "valid_moves": [0, 1, 2, 3, 4, 5, 6]
+        "valid_moves": [0, 1, 3, 4, 5, 6]
     }
     best_move = process_request(request)
-    print(f"Best move: {best_move}")
+    print(f"Best move: {best_move}")  # Mong đợi: 1
