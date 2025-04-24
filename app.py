@@ -13,8 +13,8 @@ from fastapi.middleware.cors import CORSMiddleware
 ROW_COUNT = 6
 COLUMN_COUNT = 7
 WIN_COUNT = 4
-AI_DEPTH = 12
-BASE_TIMEOUT = 9
+AI_DEPTH = 20
+BASE_TIMEOUT = 8
 TRANS_TABLE_SIZE = 2**24
 
 # --- Logging Configuration ---
