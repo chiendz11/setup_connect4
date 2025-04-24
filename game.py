@@ -7,7 +7,7 @@ import logging
 import asyncio
 import platform
 from ai1 import process_request as ai1_process_request
-from ai2 import process_request as ai2_process_request
+from ai2 import process_request as ai3_process_request
 
 # --- Constants ---
 ROW_COUNT = 6
@@ -155,8 +155,8 @@ async def update_loop():
                 sys.exit()
 
         piece = 1 if turn == 0 else 2
-        ai_name = "AI 2 (Smarter)" if turn == 0 else "AI 1 (Simple)"
-        ai_func = ai2_process_request if turn == 0 else ai1_process_request
+        ai_name = "AI 3 (Smarter)" if turn == 0 else "AI 1 (Simple)"
+        ai_func = ai3_process_request if turn == 0 else ai1_process_request
         logging.info(f"Turn: {ai_name} (Player {piece})")
 
         # Create request for the AI

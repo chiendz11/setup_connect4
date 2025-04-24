@@ -9,9 +9,9 @@ from typing import List, Optional, Tuple, Dict
 ROW_COUNT = 6
 COLUMN_COUNT = 7
 WIN_COUNT = 4
-AI_DEPTH = 9
-BASE_TIMEOUT = 3.8
-TRANS_TABLE_SIZE = 1000000
+AI_DEPTH = 12
+BASE_TIMEOUT = 9
+TRANS_TABLE_SIZE = 2**24
 
 # --- Logging Configuration ---
 logging.basicConfig(
