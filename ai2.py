@@ -10,7 +10,7 @@ ROW_COUNT = 6
 COLUMN_COUNT = 7
 WIN_COUNT = 4
 AI_DEPTH = 12  # Increased from 9 for deeper search
-BASE_TIMEOUT = 9  # Increased from 3.8 for deeper searches
+BASE_TIMEOUT = 5 # Increased from 3.8 for deeper searches
 TRANS_TABLE_SIZE = 2**24
 
 # --- Logging Configuration ---
