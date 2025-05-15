@@ -1,152 +1,74 @@
-# Connect 4 AI API
+BÁO CÁO DỰ ÁN AI: XÂY DỰNG ENGINE CONNECT FOUR THÔNG MINH
 
-Ứng dụng API cho phép tích hợp thuật toán AI vào hệ thống Connect 4.
+1. Giới thiệu
 
-## API Endpoint
+Dự án này nhằm mục đích xây dựng một trí tuệ nhân tạo (AI) có khả năng chơi trò chơi "Connect Four" (Cờ Caro 4) một cách hiệu quả và thông minh. Connect Four là một trò chơi chiến thuật hai người chơi đơn giản nhưng đòi hỏi khả năng nhìn trước và đánh giá các nước đi tiềm năng. Mục tiêu của chúng tôi là phát triển một engine AI có thể phân tích trạng thái bàn cờ, đánh giá độ mạnh của các vị trí, và chọn nước đi tối ưu nhất trong một khoảng thời gian giới hạn.
 
-Sau khi triển khai API của bạn, bạn sẽ cần cung cấp URL endpoint cho server chính:
-```
-https://your-ai-service.com
-```
+2. Bài toán và Phương pháp Tiếp cận
 
-### Ví dụ URL sau khi triển khai bằng Ngrok:
-```
-https://c3b1-2405-4802-21ad-48b0-7c4a-8729-ca-4c80.ngrok-free.app
-```
+Bài toán cốt lõi là tìm nước đi tốt nhất trên bàn cờ Connect Four hiện tại cho một người chơi cụ thể. Do Connect Four là một trò chơi có thông tin hoàn chỉnh (người chơi biết mọi thứ về trạng thái game) và có số lượng trạng thái tương đối hữu hạn so với các game phức tạp hơn như cờ vua, các thuật toán tìm kiếm trên cây trò chơi là phương pháp tiếp cận phù hợp.
 
-## Format API
+Chúng tôi lựa chọn sử dụng thuật toán Minimax kết hợp với kỹ thuật Cắt tỉa Alpha-Beta (Alpha-Beta Pruning). Minimax khám phá cây trò chơi bằng cách giả định cả hai người chơi đều chơi tối ưu (người chơi hiện tại cố gắng tối đa hóa điểm số của mình, người chơi đối thủ cố gắng tối thiểu hóa điểm số đó). Cắt tỉa Alpha-Beta là một tối ưu hóa cho Minimax, giúp loại bỏ việc khám phá các nhánh cây mà chắc chắn sẽ không dẫn đến nước đi tốt hơn so với những gì đã tìm thấy, từ đó giảm đáng kể thời gian tính toán.
 
-### Request Format
-```json
-{
-  "board": [[0,0,0,...], [...], ...],
-  "current_player": 1,
-  "valid_moves": [0,1,2,...]
-}
-```
+3. Các Kỹ thuật và Tối ưu hóa Chính
 
-Trong đó:
-- `board`: Mảng 2 chiều (6x7) biểu diễn bảng Connect 4
-  - `0`: Ô trống
-  - `1`: Quân của người chơi 1
-  - `2`: Quân của người chơi 2
-- `current_player`: Người chơi hiện tại (1 hoặc 2)
-- `valid_moves`: Các cột còn có thể đặt quân (từ 0-6)
+Để nâng cao hiệu quả và sức mạnh của AI, chúng tôi đã tích hợp nhiều kỹ thuật tiên tiến:
 
-### Response Format
-```json
-{
-  "move": 3
-}
-```
+Hàm Lượng Giá (Evaluation Function): Đây là "trái tim" của AI khi không thể tìm kiếm đến cuối game. Hàm này gán một giá trị số cho mỗi trạng thái bàn cờ, phản ánh mức độ thuận lợi của trạng thái đó cho người chơi hiện tại. Hàm lượng giá của chúng tôi đánh giá các yếu tố như:
 
-Trong đó:
-- `move`: Cột mà AI quyết định đặt quân (chỉ số từ 0-6)
+Số lượng quân cờ liên tiếp (ví dụ: 2, 3 quân) trong các cửa sổ 4 ô theo hàng ngang, dọc và chéo.
+Phát hiện các mối đe dọa tiềm năng (ví dụ: 3 quân liên tiếp với một ô trống kề cận).
+Ưu tiên các quân cờ ở cột trung tâm vì chúng tham gia vào nhiều đường chiến thắng tiềm năng hơn.
+Gán điểm số rất cao cho các trạng thái thắng/thua trực tiếp.
+Tìm kiếm theo Chiều sâu Lặp (Iterative Deepening): Thay vì tìm kiếm đến một độ sâu cố định, chúng tôi bắt đầu tìm kiếm ở độ sâu nông và tăng dần độ sâu sau mỗi lần lặp. Điều này giúp:
 
-Ví dụ: Nếu API trả về `move = 3`, server sẽ đặt quân vào ô trống thấp nhất của cột thứ 4 (vì chỉ số bắt đầu từ 0).
+Tìm được nước đi hợp lý nhanh chóng (ở độ sâu nông).
+Cho phép AI trả về nước đi tốt nhất tìm được cho đến thời điểm hiện tại nếu hết thời gian (nhờ cơ chế timeout).
+Sử dụng thông tin từ lần tìm kiếm ở độ sâu d để cải thiện thứ tự nước đi ở độ sâu d+1.
+Bảng Chuyển vị (Transposition Table): Bảng này lưu trữ kết quả của các trạng thái bàn cờ đã được khám phá trước đó. Khi thuật toán gặp lại một trạng thái đã có trong bảng, nó có thể sử dụng kết quả đã lưu thay vì tính toán lại từ đầu. Điều này đặc biệt hữu ích trong các game có nhiều đường đi khác nhau dẫn đến cùng một trạng thái bàn cờ.
 
-## Triển khai API
+Chúng tôi sử dụng Zobrist Hashing để tạo một khóa số duy nhất (hash) cho mỗi trạng thái bàn cờ, giúp truy cập bảng chuyển vị nhanh chóng và hiệu quả.
+Bảng được triển khai như một bộ nhớ đệm có giới hạn kích thước (LimitedDict), tự động loại bỏ các mục ít hữu ích (thường là các mục được lưu trữ ở độ sâu nông hơn) khi đạt đến kích thước tối đa.
+Sắp xếp Nước đi (Move Ordering): Thứ tự các nước đi được xem xét trong thuật toán Alpha-Beta ảnh hưởng lớn đến hiệu quả của việc cắt tỉa. Chúng tôi ưu tiên xem xét các nước đi có khả năng tốt trước, bao gồm:
 
-### Cài đặt thư viện
-```bash
-pip install -r requirements.txt
-```
+Nước đi thắng trực tiếp.
+Nước đi cản đối thủ thắng trực tiếp.
+Các nước đi được gợi ý bởi hàm lượng giá tĩnh.
+Các nước đi ở cột trung tâm.
+Sử dụng Killer Moves (các nước đi gây cắt tỉa hiệu quả ở các nút anh em) và History Scores (lịch sử về mức độ hiệu quả của các nước đi trong quá khứ) để cải thiện thứ tự.
+Cơ chế Hẹn giờ (Timeout): Trong môi trường thực tế, AI cần trả về nước đi trong một khoảng thời gian nhất định. Chúng tôi triển khai cơ chế kiểm tra thời gian liên tục trong quá trình tìm kiếm và ngừng tìm kiếm nếu vượt quá giới hạn cho phép, trả về nước đi tốt nhất tìm được ở độ sâu hoàn thành gần nhất.
 
-### File app.py
-```python
-from fastapi import FastAPI, HTTPException
-import random
-import uvicorn
-from pydantic import BaseModel
-from typing import List, Optional
-from fastapi.middleware.cors import CORSMiddleware
+Cắt tỉa Null Move (Null Move Pruning): Một kỹ thuật nâng cao giả định bỏ qua một nước đi của người chơi hiện tại để xem xét trạng thái kết quả có tệ đến mức gây ra cắt tỉa hay không. Điều này có thể giúp phát hiện ra các vị trí mạnh một cách nhanh chóng hơn (dù đôi khi cần kiểm tra lại).
 
-app = FastAPI()
+4. Cấu trúc Mã nguồn
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+Mã nguồn được tổ chức thành các phần rõ ràng:
 
-class GameState(BaseModel):
-    board: List[List[int]]
-    current_player: int
-    valid_moves: List[int]
+Định nghĩa các hằng số (kích thước bàn cờ, độ sâu tìm kiếm, thời gian).
+Khởi tạo Zobrist Hashing.
+Định nghĩa cấu trúc Bảng Chuyển vị (LimitedDict).
+Các hàm trợ giúp cho logic game cơ bản (kiểm tra nước đi hợp lệ, kiểm tra thắng, trạng thái kết thúc game).
+Hàm lượng giá (evaluate_board, evaluate_window).
+Hàm sắp xếp nước đi (sort_moves).
+Thuật toán Minimax với Alpha-Beta pruning (minimax).
+Hàm tìm nước đi tốt nhất chính (find_best_move) sử dụng iterative deepening và xử lý timeout.
+Hàm xử lý yêu cầu đầu vào (process_request) mô phỏng giao diện nhận dữ liệu.
+Khối kiểm tra đơn giản (if __name__ == "__main__":).
+5. Kết quả và Hiệu suất
 
-class AIResponse(BaseModel):
-    move: int
+Với sự kết hợp của Minimax, Alpha-Beta pruning, Transposition Table và Iterative Deepening, engine AI cho Connect Four này có khả năng tìm kiếm ở độ sâu đáng kể trong thời gian cho phép. Hàm lượng giá được thiết kế để nắm bắt các yếu tố quan trọng của trò chơi, giúp AI đưa ra các quyết định chiến thuật tốt. Cơ chế sắp xếp nước đi và các tối ưu hóa khác góp phần tăng tốc độ cắt tỉa, cho phép khám phá cây trò chơi rộng hơn và sâu hơn, từ đó nâng cao chất lượng nước đi.
 
-@app.post("/api/connect4-move")
-async def make_move(game_state: GameState) -> AIResponse:
-    try:
-        if not game_state.valid_moves:
-            raise ValueError("Không có nước đi hợp lệ")
-            
-        # TODO: Thay thế mã này bằng thuật toán AI của bạn
-        selected_move = random.choice(game_state.valid_moves)
-        
-        return AIResponse(move=selected_move)
-    except Exception as e:
-        if game_state.valid_moves:
-            return AIResponse(move=game_state.valid_moves[0])
-        raise HTTPException(status_code=400, detail=str(e))
+Engine có thể phát hiện và thực hiện ngay các nước đi thắng hoặc cản đối thủ thắng. Khả năng điều chỉnh độ sâu và thời gian dựa trên số lượng nước đi hợp lệ giúp AI phản ứng linh hoạt hơn trong các giai đoạn khác nhau của game.
 
-if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8080)
-```
+6. Hạn chế và Hướng Phát triển Tiếp theo
 
-### Chạy server
-```bash
-python app.py
-```
+Mặc dù khá hiệu quả, engine vẫn có những hạn chế và tiềm năng cải tiến:
 
-## Triển khai public với Ngrok
+Hàm lượng giá: Có thể tinh chỉnh hoặc làm phức tạp hơn nữa để đánh giá chính xác hơn các cấu hình quân cờ và mối đe dọa phức tạp.
+Điều chỉnh Tham số: Các hằng số như AI_DEPTH, BASE_TIMEOUT, kích thước TRANS_TABLE_SIZE, và trọng số trong hàm lượng giá có thể được điều chỉnh thêm thông qua thử nghiệm hoặc huấn luyện tự động.
+Kỹ thuật tìm kiếm: Khám phá các thuật toán tìm kiếm nâng cao hơn như NegaScout hoặc MTD(f) có thể mang lại hiệu quả cao hơn nữa.
+Xử lý cuối game: Đối với các trạng thái gần cuối game, có thể sử dụng thuật toán tìm kiếm chuyên biệt hơn (ví dụ: Proof-Number Search) để tìm ra kết quả chắc chắn (thắng, thua, hòa).
+Tăng cường Killer Moves/History Scores: Tinh chỉnh cách cập nhật và sử dụng các heuristic này.
+7. Kết luận
 
-Để server của bạn có thể truy cập được từ internet, bạn có thể sử dụng Ngrok:
-
-1. Tải và cài đặt Ngrok: https://ngrok.com/download
-2. Chạy server FastAPI của bạn (mặc định cổng 8080)
-3. Trong terminal khác, chạy lệnh:
-```bash
-ngrok http 8080
-```
-4. Sao chép URL Forwarding (dạng https://xxxx-xxxx.ngrok-free.app) và đăng ký với server chính.
-
-## Phát triển thuật toán AI
-
-Để cải thiện AI của bạn, hãy thay thế đoạn mã sau trong hàm `make_move`:
-
-```python
-# TODO: Thay thế mã này bằng thuật toán AI của bạn
-selected_move = random.choice(game_state.valid_moves)
-```
-
-Bạn có thể cài đặt các thuật toán như Minimax, Alpha-Beta Pruning, hoặc các kỹ thuật Machine Learning để cải thiện khả năng chơi của AI.
-
-## Ví dụ Game State
-
-```json
-{
-  "board": [
-    [0, 0, 0, 0, 0, 0, 0],
-    [0, 0, 0, 0, 0, 0, 0],
-    [0, 0, 0, 0, 0, 0, 0],
-    [0, 0, 0, 0, 0, 0, 0],
-    [0, 0, 0, 0, 0, 0, 0],
-    [0, 0, 0, 0, 0, 0, 0]
-  ],
-  "current_player": 1,
-  "valid_moves": [0, 1, 2, 3, 4, 5, 6]
-}
-```
-
-## Lưu ý
-
-- API của bạn sẽ tự động nhận dữ liệu từ server và chuyển đổi thành đối tượng `GameState`
-- Bạn chỉ cần tập trung vào việc phát triển thuật toán AI để chọn nước đi tốt nhất
-- Đảm bảo API của bạn luôn trả về một nước đi hợp lệ (nằm trong danh sách `valid_moves`)
-- Nếu xảy ra lỗi, API sẽ tự động chọn nước đi đầu tiên trong danh sách `valid_moves`
-``` 
+Dự án đã thành công trong việc xây dựng một engine AI chơi Connect Four mạnh mẽ, sử dụng các kỹ thuật tìm kiếm cây trò chơi và tối ưu hóa tiêu chuẩn trong lĩnh vực AI game. Sự kết hợp của Minimax, Alpha-Beta pruning, Transposition Table, Zobrist Hashing, Iterative Deepening và các heuristic sắp xếp nước đi đã tạo ra một đối thủ đáng gờm trong trò chơi Connect Four. Dự án cung cấp một nền tảng vững chắc để tiếp tục nghiên cứu và cải tiến hiệu suất của AI.
