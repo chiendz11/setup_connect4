@@ -2,41 +2,41 @@ BÁO CÁO DỰ ÁN AI: XÂY DỰNG ENGINE CONNECT FOUR THÔNG MINH
 
 1. Giới thiệu
 
-Dự án này nhằm mục đích xây dựng một trí tuệ nhân tạo (AI) có khả năng chơi trò chơi "Connect Four" (Cờ Caro 4) một cách hiệu quả và thông minh. Connect Four là một trò chơi chiến thuật hai người chơi đơn giản nhưng đòi hỏi khả năng nhìn trước và đánh giá các nước đi tiềm năng. Mục tiêu của chúng tôi là phát triển một engine AI có thể phân tích trạng thái bàn cờ, đánh giá độ mạnh của các vị trí, và chọn nước đi tối ưu nhất trong một khoảng thời gian giới hạn.
+Dự án này nhằm mục đích xây dựng một trí tuệ nhân tạo (AI) có khả năng chơi trò chơi "Connect Four" (Cờ Caro 4) một cách hiệu quả và thông minh. Connect Four là một trò chơi chiến thuật hai người chơi đơn giản nhưng đòi hỏi khả năng nhìn trước và đánh giá các nước đi tiềm năng. Mục tiêu của em là phát triển một engine AI có thể phân tích trạng thái bàn cờ, đánh giá độ mạnh của các vị trí, và chọn nước đi tối ưu nhất trong một khoảng thời gian giới hạn.
 
 2. Bài toán và Phương pháp Tiếp cận
 
 Bài toán cốt lõi là tìm nước đi tốt nhất trên bàn cờ Connect Four hiện tại cho một người chơi cụ thể. Do Connect Four là một trò chơi có thông tin hoàn chỉnh (người chơi biết mọi thứ về trạng thái game) và có số lượng trạng thái tương đối hữu hạn so với các game phức tạp hơn như cờ vua, các thuật toán tìm kiếm trên cây trò chơi là phương pháp tiếp cận phù hợp.
 
-Chúng tôi lựa chọn sử dụng thuật toán Minimax kết hợp với kỹ thuật Cắt tỉa Alpha-Beta (Alpha-Beta Pruning). Minimax khám phá cây trò chơi bằng cách giả định cả hai người chơi đều chơi tối ưu (người chơi hiện tại cố gắng tối đa hóa điểm số của mình, người chơi đối thủ cố gắng tối thiểu hóa điểm số đó). Cắt tỉa Alpha-Beta là một tối ưu hóa cho Minimax, giúp loại bỏ việc khám phá các nhánh cây mà chắc chắn sẽ không dẫn đến nước đi tốt hơn so với những gì đã tìm thấy, từ đó giảm đáng kể thời gian tính toán.
+Em lựa chọn sử dụng thuật toán Minimax kết hợp với kỹ thuật Cắt tỉa Alpha-Beta (Alpha-Beta Pruning). Minimax khám phá cây trò chơi bằng cách giả định cả hai người chơi đều chơi tối ưu (người chơi hiện tại cố gắng tối đa hóa điểm số của mình, người chơi đối thủ cố gắng tối thiểu hóa điểm số đó). Cắt tỉa Alpha-Beta là một tối ưu hóa cho Minimax, giúp loại bỏ việc khám phá các nhánh cây mà chắc chắn sẽ không dẫn đến nước đi tốt hơn so với những gì đã tìm thấy, từ đó giảm đáng kể thời gian tính toán.
 
 3. Các Kỹ thuật và Tối ưu hóa Chính
 
-Để nâng cao hiệu quả và sức mạnh của AI, chúng tôi đã tích hợp nhiều kỹ thuật tiên tiến:
+Để nâng cao hiệu quả và sức mạnh của AI, em đã tích hợp nhiều kỹ thuật tiên tiến:
 
-Hàm Lượng Giá (Evaluation Function): Đây là "trái tim" của AI khi không thể tìm kiếm đến cuối game. Hàm này gán một giá trị số cho mỗi trạng thái bàn cờ, phản ánh mức độ thuận lợi của trạng thái đó cho người chơi hiện tại. Hàm lượng giá của chúng tôi đánh giá các yếu tố như:
+Hàm Lượng Giá (Evaluation Function): Đây là "trái tim" của AI khi không thể tìm kiếm đến cuối game. Hàm này gán một giá trị số cho mỗi trạng thái bàn cờ, phản ánh mức độ thuận lợi của trạng thái đó cho người chơi hiện tại. Hàm lượng giá của em đánh giá các yếu tố như:
 
 Số lượng quân cờ liên tiếp (ví dụ: 2, 3 quân) trong các cửa sổ 4 ô theo hàng ngang, dọc và chéo.
 Phát hiện các mối đe dọa tiềm năng (ví dụ: 3 quân liên tiếp với một ô trống kề cận).
 Ưu tiên các quân cờ ở cột trung tâm vì chúng tham gia vào nhiều đường chiến thắng tiềm năng hơn.
 Gán điểm số rất cao cho các trạng thái thắng/thua trực tiếp.
-Tìm kiếm theo Chiều sâu Lặp (Iterative Deepening): Thay vì tìm kiếm đến một độ sâu cố định, chúng tôi bắt đầu tìm kiếm ở độ sâu nông và tăng dần độ sâu sau mỗi lần lặp. Điều này giúp:
+Tìm kiếm theo Chiều sâu Lặp (Iterative Deepening): Thay vì tìm kiếm đến một độ sâu cố định, em bắt đầu tìm kiếm ở độ sâu nông và tăng dần độ sâu sau mỗi lần lặp. Điều này giúp:
 
 Tìm được nước đi hợp lý nhanh chóng (ở độ sâu nông).
 Cho phép AI trả về nước đi tốt nhất tìm được cho đến thời điểm hiện tại nếu hết thời gian (nhờ cơ chế timeout).
 Sử dụng thông tin từ lần tìm kiếm ở độ sâu d để cải thiện thứ tự nước đi ở độ sâu d+1.
 Bảng Chuyển vị (Transposition Table): Bảng này lưu trữ kết quả của các trạng thái bàn cờ đã được khám phá trước đó. Khi thuật toán gặp lại một trạng thái đã có trong bảng, nó có thể sử dụng kết quả đã lưu thay vì tính toán lại từ đầu. Điều này đặc biệt hữu ích trong các game có nhiều đường đi khác nhau dẫn đến cùng một trạng thái bàn cờ.
 
-Chúng tôi sử dụng Zobrist Hashing để tạo một khóa số duy nhất (hash) cho mỗi trạng thái bàn cờ, giúp truy cập bảng chuyển vị nhanh chóng và hiệu quả.
+Em sử dụng Zobrist Hashing để tạo một khóa số duy nhất (hash) cho mỗi trạng thái bàn cờ, giúp truy cập bảng chuyển vị nhanh chóng và hiệu quả.
 Bảng được triển khai như một bộ nhớ đệm có giới hạn kích thước (LimitedDict), tự động loại bỏ các mục ít hữu ích (thường là các mục được lưu trữ ở độ sâu nông hơn) khi đạt đến kích thước tối đa.
-Sắp xếp Nước đi (Move Ordering): Thứ tự các nước đi được xem xét trong thuật toán Alpha-Beta ảnh hưởng lớn đến hiệu quả của việc cắt tỉa. Chúng tôi ưu tiên xem xét các nước đi có khả năng tốt trước, bao gồm:
+Sắp xếp Nước đi (Move Ordering): Thứ tự các nước đi được xem xét trong thuật toán Alpha-Beta ảnh hưởng lớn đến hiệu quả của việc cắt tỉa. Em ưu tiên xem xét các nước đi có khả năng tốt trước, bao gồm:
 
 Nước đi thắng trực tiếp.
 Nước đi cản đối thủ thắng trực tiếp.
 Các nước đi được gợi ý bởi hàm lượng giá tĩnh.
 Các nước đi ở cột trung tâm.
 Sử dụng Killer Moves (các nước đi gây cắt tỉa hiệu quả ở các nút anh em) và History Scores (lịch sử về mức độ hiệu quả của các nước đi trong quá khứ) để cải thiện thứ tự.
-Cơ chế Hẹn giờ (Timeout): Trong môi trường thực tế, AI cần trả về nước đi trong một khoảng thời gian nhất định. Chúng tôi triển khai cơ chế kiểm tra thời gian liên tục trong quá trình tìm kiếm và ngừng tìm kiếm nếu vượt quá giới hạn cho phép, trả về nước đi tốt nhất tìm được ở độ sâu hoàn thành gần nhất.
+Cơ chế Hẹn giờ (Timeout): Trong môi trường thực tế, AI cần trả về nước đi trong một khoảng thời gian nhất định. Em triển khai cơ chế kiểm tra thời gian liên tục trong quá trình tìm kiếm và ngừng tìm kiếm nếu vượt quá giới hạn cho phép, trả về nước đi tốt nhất tìm được ở độ sâu hoàn thành gần nhất.
 
 Cắt tỉa Null Move (Null Move Pruning): Một kỹ thuật nâng cao giả định bỏ qua một nước đi của người chơi hiện tại để xem xét trạng thái kết quả có tệ đến mức gây ra cắt tỉa hay không. Điều này có thể giúp phát hiện ra các vị trí mạnh một cách nhanh chóng hơn (dù đôi khi cần kiểm tra lại).
 
