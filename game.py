@@ -1,440 +1,478 @@
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
-from typing import List, Optional, Tuple, Dict
 import numpy as np
+import pygame
+import sys
 import math
 import time
-import random
 import logging
-from collections import OrderedDict
-import uvicorn
-from fastapi.middleware.cors import CORSMiddleware
+import asyncio
+import platform
+from ai1 import process_request as ai1_process_request
+from ai2 import process_request as ai2_process_request
 
 # --- Constants ---
 ROW_COUNT = 6
 COLUMN_COUNT = 7
 WIN_COUNT = 4
-AI_DEPTH = 10
-BASE_TIMEOUT = 5.0
-TRANS_TABLE_SIZE = 1 << 20
+SQUARESIZE = 100
+RADIUS = int(SQUARESIZE / 2 - 5)
+width = COLUMN_COUNT * SQUARESIZE
+height = (ROW_COUNT + 1) * SQUARESIZE
+size = (width, height)
+BLUE = (0, 0, 255)
+BLACK = (0, 0, 0)
+RED = (255, 0, 0)
+YELLOW = (255, 255, 0)
+WHITE = (255, 255, 255)
+GREEN = (0, 255, 0)
+FPS = 60
+MOVE_DELAY = 0.01
+AUTO_RUN = True
+TOTAL_GAMES = 20
+AI_TIMEOUT = 10.0
 
 # --- Logging Configuration ---
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(message)s',
     handlers=[
+        logging.FileHandler('game_log.txt'),
         logging.StreamHandler()
     ]
 )
 
-# --- FastAPI Setup ---
-app = FastAPI()
+# --- Game Statistics ---
+class GameStats:
+    def __init__(self):
+        self.wins_ai1 = 0
+        self.wins_ai2 = 0
+        self.draws = 0
+        self.losses_ai2 = 0
+        self.moves_count = []  # Số nước mỗi ván
+        self.thinking_times = {1: [], 2: []}  # Thời gian suy nghĩ của mỗi AI
+        self.first_player_wins = 0  # Số ván thắng khi đi trước
+        self.second_player_wins = 0  # Số ván thắng khi đi sau
+        self.winning_patterns = []  # Lưu pattern thắng
+        self.game_replays = []  # Lưu replay các ván đấu
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+    def update(self, winner, last_move, current_player, is_first_player, moves_in_game, thinking_time):
+        if winner == "AI 2 (Smarter)":
+            self.wins_ai2 += 1
+            if is_first_player:
+                self.first_player_wins += 1
+            else:
+                self.second_player_wins += 1
+        elif winner == "AI 1 (Simple)":
+            self.wins_ai1 += 1
+            self.losses_ai2 += 1
+        else:
+            self.draws += 1
+        
+        self.moves_count.append(moves_in_game)
+        self.thinking_times[current_player].append(thinking_time)
 
-# --- Pydantic Models ---
-class GameState(BaseModel):
-    board: List[List[int]]
-    current_player: int
-    valid_moves: List[int]
+    def get_stats_summary(self):
+        total_games = self.wins_ai1 + self.wins_ai2 + self.draws
+        avg_moves = sum(self.moves_count) / len(self.moves_count) if self.moves_count else 0
+        avg_time_ai1 = sum(self.thinking_times[1]) / len(self.thinking_times[1]) if self.thinking_times[1] else 0
+        avg_time_ai2 = sum(self.thinking_times[2]) / len(self.thinking_times[2]) if self.thinking_times[2] else 0
+        
+        return (
+            f"Games played: {total_games}\n"
+            f"AI2 Wins: {self.wins_ai2} ({self.wins_ai2/total_games*100:.1f}%)\n"
+            f"AI1 Wins: {self.wins_ai1} ({self.wins_ai1/total_games*100:.1f}%)\n"
+            f"Draws: {self.draws} ({self.draws/total_games*100:.1f}%)\n"
+            f"First player wins: {self.first_player_wins} ({self.first_player_wins/total_games*100:.1f}%)\n"
+            f"Average moves per game: {avg_moves:.1f}\n"
+            f"Average thinking time - AI1: {avg_time_ai1:.3f}s, AI2: {avg_time_ai2:.3f}s"
+        )
 
-class AIResponse(BaseModel):
-    move: int
+# --- Game Replay ---
+class GameReplay:
+    def __init__(self):
+        self.moves = []
+        self.thinking_times = []
+        self.board_states = []
+        self.winner = None
+        self.first_player = None
 
-# --- Zobrist Hashing Initialization ---
-np.random.seed(42)
-ZOBRIST_KEYS = np.zeros((ROW_COUNT, COLUMN_COUNT, 3), dtype=np.uint64)
-for r in range(ROW_COUNT):
-    for c in range(COLUMN_COUNT):
-        for val in range(3):  # 0, 1, 2
-            ZOBRIST_KEYS[r, c, val] = np.uint64(random.getrandbits(64))
+    def add_move(self, player, move, thinking_time, board_state):
+        self.moves.append((player, move))
+        self.thinking_times.append(thinking_time)
+        self.board_states.append(board_state.copy())
 
-# --- Transposition Table ---
-class LimitedDict(OrderedDict):
-    def __init__(self, maxsize: int):
-        super().__init__()
-        self.maxsize = maxsize
-        self.depths = {}  # Lưu độ sâu cho mỗi mục
+    def save_to_file(self, filename):
+        with open(filename, 'w') as f:
+            f.write(f"Winner: {self.winner}\n")
+            f.write(f"First player: {self.first_player}\n")
+            for i, (player, move) in enumerate(self.moves):
+                f.write(f"Move {i+1}: Player {player} -> {move} ({self.thinking_times[i]:.3f}s)\n")
+            f.write("\nFinal board state:\n")
+            f.write(str(self.board_states[-1]))
 
-    def __setitem__(self, key, value):
-        depth = value[0]  # Lưu độ sâu
-        super().__setitem__(key, value)
-        self.depths[key] = depth
-        if len(self) > self.maxsize:
-            min_depth_key = min(self.depths, key=lambda k: self.depths[k])
-            self.pop(min_depth_key)
-            del self.depths[min_depth_key]
+# --- Move Validation ---
+def validate_move(board, move, piece, valid_moves):
+    if move is None:
+        return False, "Move cannot be None"
+    
+    if isinstance(move, tuple):
+        if len(move) != 2:
+            return False, "Invalid remove move format"
+        row, col = move
+        if not (0 <= row < ROW_COUNT and 0 <= col < COLUMN_COUNT):
+            return False, "Remove move out of bounds"
+        if board[row][col] != 3 - piece:
+            return False, "Cannot remove opponent's piece"
+    else:
+        if move not in valid_moves:
+            return False, f"Invalid column {move}. Valid columns: {valid_moves}"
+        
+    return True, None
 
-transposition_table: LimitedDict = LimitedDict(maxsize=TRANS_TABLE_SIZE)
-killer_moves: Dict[int, List[int]] = {d: [] for d in range(AI_DEPTH + 1)}
-history_scores: Dict[Tuple[int, int], int] = {}
+# --- Tournament Mode ---
+def run_tournament(num_rounds=10):
+    stats = GameStats()
+    for round in range(num_rounds):
+        logging.info(f"Starting tournament round {round+1}/{num_rounds}")
+        # Each AI plays both first and second
+        for first_player in [0, 1]:
+            replay = GameReplay()
+            replay.first_player = first_player
+            game_result = play_game(first_player, replay)
+            stats.game_replays.append(replay)
+            logging.info(f"Round {round+1} Game {2*round + first_player + 1} result: {game_result}")
+    
+    logging.info("\nTournament Results:\n" + stats.get_stats_summary())
+    return stats
+
+# --- Time Control ---
+class TimeControl:
+    def __init__(self, base_time=5.0, increment=0.1):
+        self.base_time = base_time
+        self.increment = increment
+        self.time_left = {1: base_time, 2: base_time}
+        
+    def update(self, player, used_time):
+        self.time_left[player] -= used_time
+        self.time_left[player] += self.increment
+        if self.time_left[player] < 0:
+            raise TimeoutError(f"Player {player} ran out of time")
+        
+    def get_time_left(self, player):
+        return self.time_left[player]
 
 # --- Helper Functions ---
-def zobrist_hash(board: np.ndarray) -> int:
-    hash_value = np.uint64(0)
-    for r in range(ROW_COUNT):
-        for c in range(COLUMN_COUNT):
-            val = int(board[r, c])
-            hash_value ^= ZOBRIST_KEYS[r, c, val]
-    return int(hash_value)
+def create_board():
+    return np.zeros((ROW_COUNT, COLUMN_COUNT), dtype=int)
 
-def is_valid_location(board: np.ndarray, col: int) -> bool:
-    return board[ROW_COUNT - 1, col] == 0
+def is_valid_location(board, col):
+    return board[ROW_COUNT - 1][col] == 0
 
-def get_next_open_row(board: np.ndarray, col: int) -> Optional[int]:
+def get_next_open_row(board, col):
     for r in range(ROW_COUNT):
-        if board[r, col] == 0:
+        if board[r][col] == 0:
             return r
     return None
 
-def get_valid_moves(board: np.ndarray) -> List[int]:
-    valid_moves = [col for col in range(COLUMN_COUNT) if is_valid_location(board, col)]
-    center_col = COLUMN_COUNT // 2
-    if center_col in valid_moves:
-        valid_moves.remove(center_col)
-        valid_moves.insert(0, center_col)
-    return valid_moves
+def get_valid_columns(board):
+    return [col for col in range(COLUMN_COUNT) if is_valid_location(board, col)]
 
-def winning_move(board: np.ndarray, piece: int) -> bool:
-    for c in range(COLUMN_COUNT - 3):
+def drop_piece(board, row, col, piece):
+    board[row][col] = piece
+
+def remove_piece(board, row, col, piece):
+    if 0 <= row < ROW_COUNT and 0 <= col < COLUMN_COUNT and board[row][col] == (3 - piece):
+        board[row][col] = 0
+        return True
+    return False
+
+def winning_move(board, piece):
+    for c in range(COLUMN_COUNT - (WIN_COUNT - 1)):
         for r in range(ROW_COUNT):
-            if all(board[r, c + i] == piece for i in range(WIN_COUNT)):
+            if all(board[r][c + i] == piece for i in range(WIN_COUNT)):
                 return True
     for c in range(COLUMN_COUNT):
-        for r in range(ROW_COUNT - 3):
-            if all(board[r + i, c] == piece for i in range(WIN_COUNT)):
+        for r in range(ROW_COUNT - (WIN_COUNT - 1)):
+            if all(board[r + i][c] == piece for i in range(WIN_COUNT)):
                 return True
-    for c in range(COLUMN_COUNT - 3):
-        for r in range(ROW_COUNT - 3):
-            if all(board[r + i, c + i] == piece for i in range(WIN_COUNT)):
+    for c in range(COLUMN_COUNT - (WIN_COUNT - 1)):
+        for r in range(ROW_COUNT - (WIN_COUNT - 1)):
+            if all(board[r + i][c + i] == piece for i in range(WIN_COUNT)):
                 return True
-    for c in range(COLUMN_COUNT - 3):
-        for r in range(3, ROW_COUNT):
-            if all(board[r - i, c + i] == piece for i in range(WIN_COUNT)):
+    for c in range(COLUMN_COUNT - (WIN_COUNT - 1)):
+        for r in range(WIN_COUNT - 1, ROW_COUNT):
+            if all(board[r - i][c + i] == piece for i in range(WIN_COUNT)):
                 return True
     return False
 
-def terminal_node(board: np.ndarray) -> bool:
-    return winning_move(board, 1) or winning_move(board, 2) or not get_valid_moves(board)
+def is_board_full(board):
+    return all(board[ROW_COUNT - 1][col] != 0 for col in range(COLUMN_COUNT))
 
-# --- Evaluation Function ---
-def evaluate_window(window: List[int], piece: int) -> int:
-    score = 0
-    opp_piece = 3 - piece
-    piece_count = window.count(piece)
-    opp_count = window.count(opp_piece)
-    empty_count = window.count(0)
-
-    if piece_count == 4:
-        score += 100000
-    elif piece_count == 3 and empty_count == 1:
-        score += 150
-    elif piece_count == 2 and empty_count == 2:
-        score += 10
-    elif piece_count == 1 and empty_count == 3:
-        score += 2
-
-    if opp_count == 4:
-        score -= 100000
-    elif opp_count == 3 and empty_count == 1:
-        score -= 120
-    elif opp_count == 2 and empty_count == 2:
-        score -= 8
-    elif opp_count == 1 and empty_count == 3:
-        score -= 1
-
-    return score
-
-def evaluate_board(board: np.ndarray, piece: int) -> int:
-    score = 0
-    opp_piece = 3 - piece
-
-    # Center column
-    center_array = [int(board[r, COLUMN_COUNT // 2]) for r in range(ROW_COUNT)]
-    center_count = center_array.count(piece)
-    score += center_count * 8
-
-    # Standard window evaluation
-    for r in range(ROW_COUNT):
-        row_array = [int(board[r, c]) for c in range(COLUMN_COUNT)]
-        for c in range(COLUMN_COUNT - 3):
-            window = row_array[c:c + WIN_COUNT]
-            score += evaluate_window(window, piece)
-
+def draw_board(board, screen):
     for c in range(COLUMN_COUNT):
-        col_array = [int(board[r, c]) for r in range(ROW_COUNT)]
-        for r in range(ROW_COUNT - 3):
-            window = col_array[r:r + WIN_COUNT]
-            score += evaluate_window(window, piece)
-
-    for r in range(ROW_COUNT - 3):
-        for c in range(COLUMN_COUNT - 3):
-            window = [board[r + i, c + i] for i in range(WIN_COUNT)]
-            score += evaluate_window(window, piece)
-            window = [board[r + 3 - i, c + i] for i in range(WIN_COUNT)]
-            score += evaluate_window(window, piece)
-
-    # Double threat detection
-    threat_count = 0
-    for r in range(ROW_COUNT):
-        for c in range(COLUMN_COUNT - 3):
-            window = [board[r, c + i] for i in range(WIN_COUNT)]
-            if window.count(piece) == 3 and window.count(0) == 1:
-                threat_count += 1
+        for r in range(ROW_COUNT):
+            pygame.draw.rect(screen, BLUE, (c * SQUARESIZE, (r + 1) * SQUARESIZE, SQUARESIZE, SQUARESIZE))
+            pygame.draw.circle(screen, BLACK, (int(c * SQUARESIZE + SQUARESIZE / 2), int((r + 1) * SQUARESIZE + SQUARESIZE / 2)), RADIUS)
     for c in range(COLUMN_COUNT):
-        for r in range(ROW_COUNT - 3):
-            window = [board[r + i, c] for i in range(WIN_COUNT)]
-            if window.count(piece) == 3 and window.count(0) == 1:
-                threat_count += 1
-    if threat_count >= 2:
-        score += 500
+        for r in range(ROW_COUNT):
+            if board[r][c] == 1:
+                pygame.draw.circle(screen, RED, (int(c * SQUARESIZE + SQUARESIZE / 2), int((ROW_COUNT - r) * SQUARESIZE + SQUARESIZE / 2)), RADIUS)
+            elif board[r][c] == 2:
+                pygame.draw.circle(screen, YELLOW, (int(c * SQUARESIZE + SQUARESIZE / 2), int((ROW_COUNT - r) * SQUARESIZE + SQUARESIZE / 2)), RADIUS)
+    pygame.display.update()
 
-    return score
+async def animate_drop(board, screen, col, row, piece):
+    if not AUTO_RUN:
+        x = int(col * SQUARESIZE + SQUARESIZE / 2)
+        color = RED if piece == 1 else YELLOW
+        drop_speed = 30
+        y_start = SQUARESIZE // 2
+        y_end = int((ROW_COUNT - row) * SQUARESIZE + SQUARESIZE / 2)
+        y = y_start
+        while y < y_end:
+            draw_board(board, screen)
+            pygame.draw.circle(screen, color, (x, y), RADIUS)
+            pygame.display.update()
+            y += drop_speed
+            await asyncio.sleep(1.0 / FPS)
+    board[row][col] = piece
+    draw_board(board, screen)
 
-# --- Move Sorting ---
-def sort_moves(board: np.ndarray, moves: List[int], piece: int, depth: int) -> List[int]:
-    scored_moves = []
-    opp_piece = 3 - piece
-    center_col = COLUMN_COUNT // 2
-    current_killers = killer_moves.get(depth, [])
+def clear_message_area(screen):
+    pygame.draw.rect(screen, BLACK, (0, 0, width, SQUARESIZE))
+    pygame.display.update()
 
-    for col in moves:
-        score = 0
-        temp_board = board.copy()
-        row = get_next_open_row(temp_board, col)
-        if row is None:
-            continue
+def log_board_state(board):
+    board_str = '\n'.join([' '.join(map(str, row)) for row in board])
+    logging.info(f"Current board state:\n{board_str}")
 
-        temp_board[row, col] = piece
-        if winning_move(temp_board, piece):
-            return [col]  # Trả về ngay nước đi thắng
-        temp_board[row, col] = opp_piece
-        if winning_move(temp_board, opp_piece):
-            score += 1000000
-        temp_board[row, col] = piece
-        score += evaluate_board(temp_board, piece) * 0.1
-        if col == center_col:
-            score += 10
-        elif abs(col - center_col) == 1:
-            score += 5
-        if col in current_killers:
-            score += 100
-        score += history_scores.get((depth, col), 0) * 0.01
-        scored_moves.append((score, col))
+def create_request(board, current_player, valid_moves, is_first_player):
+    board_list = board.tolist()
+    return {
+        "board": board_list,
+        "current_player": current_player,
+        "valid_moves": valid_moves,
+        "is_first_player": is_first_player
+    }
 
-    scored_moves.sort(key=lambda x: x[0], reverse=True)
-    return [col for _, col in scored_moves]
-
-# --- Minimax with Alpha-Beta Pruning ---
-def minimax(board: np.ndarray, depth: int, alpha: float, beta: float, maximizing_player: bool,
-            piece: int, start_time: float) -> Tuple[Optional[int], float]:
-    if time.time() - start_time > BASE_TIMEOUT:
-        return None, evaluate_board(board, piece if maximizing_player else 3 - piece)
-
-    board_key = zobrist_hash(board)
-    if board_key in transposition_table:
-        stored_depth, stored_score, stored_best_move, stored_flag = transposition_table[board_key]
-        if stored_depth >= depth:
-            if stored_flag == 'exact':
-                return stored_best_move, stored_score
-            elif stored_flag == 'lower' and stored_score >= beta:
-                return stored_best_move, stored_score
-            elif stored_flag == 'upper' and stored_score <= alpha:
-                return stored_best_move, stored_score
-
-    valid_moves = get_valid_moves(board)
-    if depth == 0 or terminal_node(board):
-        if terminal_node(board):
-            if winning_move(board, piece):
-                return None, 1000000 + depth
-            elif winning_move(board, 3 - piece):
-                return None, -1000000 - depth
-            return None, 0
-        return None, evaluate_board(board, piece)
-
-    # Null Move Pruning
-    if depth > 2 and not maximizing_player and valid_moves:
-        null_score = minimax(board, depth - 3, alpha, beta, True, piece, start_time)[1]
-        if null_score <= alpha:
-            return None, null_score
-
-    moves_order = sort_moves(board, valid_moves, piece if maximizing_player else 3 - piece, depth)
-    best_move = moves_order[0] if moves_order else None
-
-    if maximizing_player:
-        value = -math.inf
-        for col in moves_order:
-            row = get_next_open_row(board, col)
-            if row is None:
-                continue
-            board[row, col] = piece
-            _, score = minimax(board, depth - 1, alpha, beta, False, piece, start_time)
-            board[row, col] = 0
-            if score > value:
-                value = score
-                best_move = col
-            alpha = max(alpha, value)
-            if alpha >= beta:
-                killer_moves.setdefault(depth, []).append(col)
-                if len(killer_moves[depth]) > 2:
-                    killer_moves[depth].pop(0)
-                history_scores[(depth, col)] = history_scores.get((depth, col), 0) + (2 ** depth)
-                break
-        flag = 'exact' if value > alpha and value < beta else 'lower' if value >= beta else 'upper'
-        transposition_table[board_key] = (depth, value, best_move, flag)
-        return best_move, value
-
+def update_stats(winner, last_move, current_player, is_first_player):
+    global wins_ai1, wins_ai2, draws, losses_ai2, last_games_log
+    if winner == "AI 2 (Smarter)":
+        wins_ai2 += 1
+    elif winner == "AI 1 (Simple)":
+        wins_ai1 += 1
+        losses_ai2 += 1
     else:
-        value = math.inf
-        for col in moves_order:
-            row = get_next_open_row(board, col)
-            if row is None:
-                continue
-            board[row, col] = 3 - piece
-            _, score = minimax(board, depth - 1, alpha, beta, True, piece, start_time)
-            board[row, col] = 0
-            if score < value:
-                value = score
-                best_move = col
-            beta = min(beta, value)
-            if alpha >= beta:
-                killer_moves.setdefault(depth, []).append(col)
-                if len(killer_moves[depth]) > 2:
-                    killer_moves[depth].pop(0)
-                history_scores[(depth, col)] = history_scores.get((depth, col), 0) + (2 ** depth)
-                break
-        flag = 'exact' if value > alpha and value < beta else 'lower' if value >= beta else 'upper'
-        transposition_table[board_key] = (depth, value, best_move, flag)
-        return best_move, value
+        draws += 1
+    stats = f"Stats: AI 2 Wins: {wins_ai2}, AI 1 Wins: {wins_ai1}, Draws: {draws}, AI 2 Losses: {losses_ai2}"
+    logging.info(stats)
+    
+    if current_game >= TOTAL_GAMES - 10:
+        last_games_log.append({
+            "game": current_game,
+            "winner": winner,
+            "board": board.copy(),
+            "last_move": last_move,
+            "current_player": current_player,
+            "is_first_player": is_first_player,
+            "stats": stats
+        })
 
-# --- Main Search Function (Iterative Deepening) ---
-def find_best_move(board: np.ndarray, piece: int, valid_moves: List[int]) -> int:
-    start_time = time.time()
-    if not valid_moves:
-        logging.error("No valid moves provided in request!")
-        fallback_moves = get_valid_moves(board)
-        return fallback_moves[0] if fallback_moves else 0
+# --- Game State ---
+class GameState:
+    def __init__(self):
+        self.wins_ai1 = 0
+        self.wins_ai2 = 0
+        self.draws = 0
+        self.current_game = 0
+        self.first_player = 0  # 0 for AI2, 1 for AI1
+        self.turn = 0
+        self.board = None
+        self.game_over = False
+        self.moves_count = 0
+        self.last_move = None
 
-    if np.all(board == 0):
-        center_col = COLUMN_COUNT // 2
-        if center_col in valid_moves:
-            logging.info(f"First move (player {piece}): Center col {center_col}")
-            return center_col
-        return valid_moves[0]
+    def reset(self):
+        self.board = create_board()
+        self.game_over = False
+        self.first_player = 1 - self.first_player  # Switch first player
+        self.turn = self.first_player
+        self.moves_count = 0
+        self.last_move = None
 
-    best_move_overall = valid_moves[0]
-    best_score_overall = -math.inf
-    last_completed_depth = 0
-    initial_moves_order = sort_moves(board, valid_moves, piece, AI_DEPTH)
+    def get_current_piece(self):
+        # First player (turn == first_player) always gets red (1)
+        # Second player always gets yellow (2)
+        return 1 if self.turn == self.first_player else 2
 
-    num_valid_moves = len(valid_moves)
-    max_depth = min(AI_DEPTH, 8 + (7 - num_valid_moves))  # Điều chỉnh độ sâu dựa trên số nước đi
-    timeout = BASE_TIMEOUT * (0.7 + 0.3 * (7 - num_valid_moves) / 7)  # Điều chỉnh thời gian
+    def get_current_ai(self):
+        # Return the current AI name and function based on turn
+        if self.turn == 0:
+            return "AI 2 (Smarter)", ai2_process_request
+        else:
+            return "AI 1 (Simple)", ai1_process_request
 
-    for col in valid_moves:
-        row = get_next_open_row(board, col)
-        if row is not None:
-            board[row, col] = piece
-            if winning_move(board, piece):
-                board[row, col] = 0
-                logging.info(f"Immediate win found for player {piece} at col {col}")
-                return col
-            board[row, col] = 0
+    def update_stats(self, winner):
+        if winner == "AI 2 (Smarter)":
+            self.wins_ai2 += 1
+        elif winner == "AI 1 (Simple)":
+            self.wins_ai1 += 1
+        else:
+            self.draws += 1
+        
+        stats = (
+            f"Stats: AI2 Wins: {self.wins_ai2}, "
+            f"AI1 Wins: {self.wins_ai1}, "
+            f"Draws: {self.draws}, "
+            f"Games: {self.current_game + 1}/{TOTAL_GAMES}"
+        )
+        logging.info(stats)
 
-    opp_piece = 3 - piece
-    for col in valid_moves:
-        row = get_next_open_row(board, col)
-        if row is not None:
-            board[row, col] = opp_piece
-            if winning_move(board, opp_piece):
-                board[row, col] = 0
-                logging.info(f"Immediate block found for player {piece} at col {col}")
-                return col
-            board[row, col] = 0
+# Initialize game state
+game_state = GameState()
 
-    for depth in range(1, max_depth + 1):
-        current_best_move_depth = None
-        current_best_score_depth = -math.inf
-        alpha = -math.inf
-        beta = math.inf
-        moves_to_search = initial_moves_order
+def setup():
+    global screen, myfont, button_font, status_font
+    pygame.init()
+    screen = pygame.display.set_mode(size)
+    pygame.display.set_caption("Connect 4 - AI vs AI")
+    game_state.reset()
+    myfont = pygame.font.SysFont("monospace", 75)
+    button_font = pygame.font.SysFont("monospace", 40)
+    status_font = pygame.font.SysFont("monospace", 30)
+    draw_board(game_state.board, screen)
+    logging.info(f"Game setup: first_player={game_state.first_player}, turn={game_state.turn}")
 
-        for col in moves_to_search:
-            if time.time() - start_time > timeout:
-                logging.warning(f"Timeout at depth {depth}. Using best move from depth {last_completed_depth}: {best_move_overall}")
-                return best_move_overall
+def reset_game():
+    game_state.current_game += 1
+    game_state.reset()
+    draw_board(game_state.board, screen)
+    logging.info(f"Starting game {game_state.current_game + 1}: first_player={game_state.first_player}, turn={game_state.turn}")
 
-            row = get_next_open_row(board, col)
-            if row is None:
-                continue
+async def update_loop():
+    if not game_state.game_over:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                sys.exit()
 
-            board[row, col] = piece
-            _, score = minimax(board, depth - 1, alpha, beta, False, piece, start_time)
-            board[row, col] = 0
+        piece = game_state.get_current_piece()
+        ai_name, ai_func = game_state.get_current_ai()
+        is_first_player = (game_state.turn == game_state.first_player)
 
-            if score > current_best_score_depth:
-                current_best_score_depth = score
-                current_best_move_depth = col
+        valid_moves = get_valid_columns(game_state.board)
+        request = create_request(game_state.board, piece, valid_moves, is_first_player)
+        logging.info(f"Turn: {ai_name} (Player {piece}), is_first_player: {is_first_player}")
 
-            alpha = max(alpha, score)
+        clear_message_area(screen)
+        screen.blit(myfont.render(f"{ai_name} thinking...", 1, WHITE), (40, 10))
+        pygame.display.update()
 
-        if time.time() - start_time <= timeout and current_best_move_depth is not None:
-            best_move_overall = current_best_move_depth
-            best_score_overall = current_best_score_depth
-            last_completed_depth = depth
-            if best_move_overall in initial_moves_order:
-                initial_moves_order.remove(best_move_overall)
-                initial_moves_order.insert(0, best_move_overall)
-            logging.info(f"Depth {depth} completed. Best move: {best_move_overall}, Score: {best_score_overall:.0f}, Time: {time.time() - start_time:.3f}s")
+        try:
+            start_time = time.time()
+            move = ai_func(request)
+            elapsed_time = time.time() - start_time
+            
+            if elapsed_time > AI_TIMEOUT:
+                raise TimeoutError(f"{ai_name} exceeded time limit")
+            
+            game_state.last_move = move
+            game_state.moves_count += 1
+            logging.info(f"{ai_name} returned move: {move}, Time: {elapsed_time:.3f}s")
 
-            if best_score_overall >= 1000000 - depth:
-                logging.info(f"Winning move found at depth {depth}. Move: {best_move_overall}")
-                break
+        except Exception as e:
+            logging.error(f"Error in {ai_name}: {str(e)}")
+            clear_message_area(screen)
+            screen.blit(myfont.render(f"Error in {ai_name}!", 1, WHITE), (40, 10))
+            pygame.display.update()
+            game_state.game_over = True
+            await asyncio.sleep(1)
+            return
 
-    if best_move_overall not in valid_moves:
-        logging.error(f"Selected best move {best_move_overall} is invalid! Valid moves: {valid_moves}")
-        return valid_moves[0]
+        if isinstance(move, tuple):
+            col, row = move
+            if not remove_piece(game_state.board, row, col, piece):
+                logging.error(f"{ai_name} returned invalid remove move ({row}, {col})")
+                clear_message_area(screen)
+                screen.blit(myfont.render(f"Invalid remove by {ai_name}!", 1, WHITE), (40, 10))
+                pygame.display.update()
+                game_state.game_over = True
+                await asyncio.sleep(1)
+                return
+            logging.info(f"{ai_name} removes piece at ({row}, {col})")
+            draw_board(game_state.board, screen)
+            log_board_state(game_state.board)
+        else:
+            col = move
+            if col not in valid_moves:
+                logging.error(f"{ai_name} returned invalid column {col}. Valid columns: {valid_moves}")
+                clear_message_area(screen)
+                screen.blit(myfont.render(f"Invalid move by {ai_name}!", 1, WHITE), (40, 10))
+                pygame.display.update()
+                game_state.game_over = True
+                await asyncio.sleep(1)
+                return
 
-    return best_move_overall
+            clear_message_area(screen)
+            screen.blit(status_font.render(f"{ai_name} chooses column {col}", 1, WHITE), (40, 10))
+            pygame.display.update()
+            await asyncio.sleep(0.1)
 
-# --- API Endpoint ---
-@app.get("/api/test")
-async def health_check():
-    return {"status": "ok", "message": "Server is running"}
+            row = get_next_open_row(game_state.board, col)
+            await animate_drop(game_state.board, screen, col, row, piece)
+            logging.info(f"{ai_name} (Player {piece}) drops in column {col}")
+            log_board_state(game_state.board)
 
-@app.post("/api/connect4-move")
-async def make_move(game_state: GameState) -> AIResponse:
-    try:
-        if not game_state.valid_moves:
-            raise ValueError("Không có nước đi hợp lệ")
+        if winning_move(game_state.board, piece):
+            logging.info(f"{ai_name} wins!")
+            clear_message_area(screen)
+            label = myfont.render(f"{ai_name} wins!", 1, RED if piece == 1 else YELLOW)
+            screen.blit(label, (40, 10))
+            pygame.display.update()
+            game_state.update_stats(ai_name)
+            game_state.game_over = True
+            await asyncio.sleep(1 if AUTO_RUN else 3)
+        elif is_board_full(game_state.board):
+            logging.info("Game ended in a draw!")
+            clear_message_area(screen)
+            label = myfont.render("Draw!", 1, WHITE)
+            screen.blit(label, (40, 10))
+            pygame.display.update()
+            game_state.update_stats("Draw")
+            game_state.game_over = True
+            await asyncio.sleep(1 if AUTO_RUN else 3)
+        else:
+            game_state.turn = 1 - game_state.turn
+            logging.info(f"Switching turn to: {'AI 2 (Smarter)' if game_state.turn == 0 else 'AI 1 (Simple)'}")
+            await asyncio.sleep(MOVE_DELAY)
 
-        board = np.array(game_state.board, dtype=np.int32)
-        board.flags.writeable = True
-        player = game_state.current_player
-        valid_moves = game_state.valid_moves
+    if game_state.game_over:
+        if AUTO_RUN and game_state.current_game < TOTAL_GAMES - 1:
+            reset_game()
+        else:
+            draw_board(game_state.board, screen)
+            clear_message_area(screen)
+            button_rect = pygame.Rect(width // 2 - 100, SQUARESIZE // 2 - 25, 200, 50)
+            pygame.draw.rect(screen, GREEN, button_rect)
+            label = button_font.render("Replay", 1, BLACK)
+            screen.blit(label, (width // 2 - label.get_width() // 2, SQUARESIZE // 2 - label.get_height() // 2))
+            pygame.display.update()
 
-        logging.info(f"Received board (player {player}):\n{board}\nValid moves: {valid_moves}")
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    pygame.quit()
+                    sys.exit()
+                if event.type == pygame.MOUSEBUTTONDOWN:
+                    if button_rect.collidepoint(event.pos):
+                        reset_game()
 
-        selected_move = find_best_move(board, player, valid_moves)
+async def main():
+    setup()
+    while True:
+        await update_loop()
+        await asyncio.sleep(1.0 / FPS)
 
-        if selected_move not in valid_moves:
-            logging.warning(f"Minimax did not return a valid move ({selected_move}). Falling back to first valid move.")
-            selected_move = valid_moves[0]
-
-        logging.info(f"AI (player {player}) selected move: {selected_move}")
-        return AIResponse(move=selected_move)
-
-    except Exception as e:
-        logging.error(f"Error in make_move: {str(e)}", exc_info=True)
-        if game_state.valid_moves:
-            return AIResponse(move=game_state.valid_moves[0])
-        raise HTTPException(status_code=400, detail=f"Lỗi xử lý nước đi: {str(e)}")
-
-if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8080)
+if platform.system() == "Emscripten":
+    asyncio.ensure_future(main())
+else:
+    if __name__ == "__main__":
+        asyncio.run(main())
