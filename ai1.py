@@ -375,7 +375,6 @@ def process_request(request):
         raw_board = request.get("board", [])
         current_player = request.get("current_player", 1)
         valid_moves = request.get("valid_moves", [0, 1, 2, 3, 4, 5, 6])
-        is_first_player = request.get("is_first_player", True)
 
         board = np.array(raw_board, dtype=np.int32)
         if board.shape != (ROW_COUNT, COLUMN_COUNT):
@@ -385,7 +384,6 @@ def process_request(request):
         print(f"Received board:\n{board}")
         print(f"Current player: {current_player}")
         print(f"Valid moves: {valid_moves}")
-        print(f"Is first player: {is_first_player}")
 
         best_move = find_best_move(board, current_player, valid_moves)
         if best_move not in valid_moves:
